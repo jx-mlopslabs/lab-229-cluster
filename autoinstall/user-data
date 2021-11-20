@@ -3,7 +3,6 @@ autoinstall:
   version: 1
   updates: security
   interactive-sections:
-    - network
     - storage
   apt:
     geoip: true
@@ -28,5 +27,3 @@ autoinstall:
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBKXY4qg4iXrMI24kP5VB6v66rkCm8rhICDYHzMOU96S lab229@iiar.pwr.edu.pl",
       ]
     install-server: true
-  packages:
-    - ethtool
