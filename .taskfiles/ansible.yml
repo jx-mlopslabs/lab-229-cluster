@@ -28,6 +28,12 @@ tasks:
     cmds:
       - "ansible-playbook -i {{.ANSIBLE_INVENTORY_DIR}}/hosts.yml {{.ANSIBLE_PLAYBOOK_DIR}}/ubuntu-prepare.yml"
 
+  playbook:ubuntu-only-wol:
+    desc: Only enable WoL support on all hosts.
+    dir: provision/ansible
+    cmds:
+      - "ansible-playbook -i {{.ANSIBLE_INVENTORY_DIR}}/hosts.yml --extra-vars "only_wol_setup=true" {{.ANSIBLE_PLAYBOOK_DIR}}/ubuntu-prepare.yml"
+
   playbook:ubuntu-upgrade:
     desc: Upgrade all the k8s nodes operating system
     dir: provision/ansible

@@ -5,9 +5,37 @@
   become: true
   gather_facts: true
   any_errors_fatal: true
+  vars:
+    only_wol_setup: false
   pre_tasks:
     - name: Pausing for 5 seconds...
       pause:
         seconds: 5
-  roles:
-    - ubuntu
+  tasks:
+    - name: Enable Wake on Lan for default NIC - {{ ansible_default_ipv4.interface }}
+      block:
+        - name: Install ethtool
+          ansible.builtin.apt:
+            name: ethtool
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+            autoclean: true
+            autoremove: true
+
+        - name: Enable Wake on Lan on default NIC
+          ansible.builtin.command: ethtool -s {{ ansible_default_ipv4.interface }} wol g
+
+        - name: Get current default NIC config
+          ansible.builtin.command: ethtool {{ ansible_default_ipv4.interface }}
+          register: current_wol_config
+
+        - name: Ensure that WoL is enabled for default NIC
+          fail:
+            msg: "WoL not enabled for default NIC."
+          when: "'Wake-on: d' not in current_wol_config.stdout"
+
+    - name: Prepare ubuntu for k3s setup
+    include_role:
+      name: ubuntu
+    when: not only_wol_setup
