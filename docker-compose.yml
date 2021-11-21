@@ -1,0 +1,13 @@
+# if docker-compose up hangs, start with command $ docker-compose run dev-environment
+version: "3.9"
+
+services:
+  dev-environment:
+    build: .
+    # interactive
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/root/development
+      - ~/.ssh:/root/.ssh
+      - ~/.gnupg:/root/.gnupg
