@@ -97,5 +97,7 @@
       "matchUpdateTypes": ["patch"],
       "labels": ["renovate/helm", "dep/patch"]
     }
-  ]
+  ],
+  // ignore custom application build with Nuxt and vue (should be enabled at some point)
+  "ignorePaths": ["manager"]
 }
