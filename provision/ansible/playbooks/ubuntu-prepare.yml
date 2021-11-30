@@ -11,6 +11,12 @@
         seconds: 5
   roles:
     - ubuntu
+
+- hosts:
+    - worker
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
   tasks:
     - name: Enable Wake on Lan for default NIC
       tags: wol
@@ -35,3 +41,18 @@
           register: current_wol_config
           changed_when: False
           failed_when: '"Wake-on: g" not in current_wol_config.stdout'
+
+    - name: Add custom GRUB config for WoL support
+      ansible.builtin.template:
+        src: /templates/grub_wol.cfg.j2
+        dest: /etc/grub.d/40_custom
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Modify default GRUB config boot options
+      # line in file
+
+    - name: Update GRUB config
+      ansible.builtin.command: update-grub
+      # changed when + error detection

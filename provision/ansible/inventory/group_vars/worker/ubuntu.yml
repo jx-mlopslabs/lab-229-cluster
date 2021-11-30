@@ -1,0 +1,4 @@
+---
+# host of the machine running tftp
+tftp_host: "{{ groups['kubernetes']['children']['master']['hosts'][0] }}"
+tftp_port: 6969
