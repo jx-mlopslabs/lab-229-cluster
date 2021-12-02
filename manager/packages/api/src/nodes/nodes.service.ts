@@ -8,17 +8,27 @@ import execa from 'execa';
 import SSH2Promise from 'ssh2-promise';
 import wait from 'wait';
 import TFTP from 'tftp';
-import wol from 'wol';
+import { HttpService } from '@nestjs/axios';
+import { BootOptions } from 'src/config/interfaces/boot-options.interface';
+import { JwtService } from '@nestjs/jwt';
+import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class NodesService {
   private states = new Map<AnsibleHost, NodeState>();
   private bootTargets = new Map<AnsibleHost, OS>();
   private logger = new Logger(NodesService.name);
-  readonly waitPeriods = 60;
+  readonly waitShutdownPeriods = 60;
+  readonly waitBootPeriods = 30;
+  readonly bootOptions: BootOptions;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private httpService: HttpService,
+    private jwtService: JwtService,
+  ) {
     this.initStates();
+    this.bootOptions = configService.createBootOptions();
 
     const tftp = TFTP.createServer(
       {
@@ -39,18 +49,22 @@ export class NodesService {
     const inventory = readFileSync(p, { encoding: 'utf-8' });
     const parsed = yaml.parse(inventory) as Inventory;
 
-    Object.values(parsed.kubernetes.children.worker.hosts || {}).forEach(
-      (host) => {
+    Object.entries(parsed.kubernetes.children.worker.hosts || {}).forEach(
+      ([fqdn, host]) => {
         const state: NodeState = {
-          host: host.ansible_host,
+          timestamp: new Date().getTime(),
+
           mac: host.mac_address,
+          host: host.ansible_host,
+          fqdn,
+          name: host.name,
+
           alive: false,
           os: OS.WINDOWS,
-          name: host.name,
+          actionPending: false,
+
           username: host.username,
           usernameWindows: host.username_windows,
-          timestamp: new Date().getTime(),
-          actionPending: false,
         };
         this.setState(state);
         this.bootTargets.set(state.host, OS.WINDOWS);
@@ -83,25 +97,32 @@ export class NodesService {
     } catch (e) {
       newState.alive = false;
     }
+    this.logger.log(
+      `[Node ${state.host}] State check {alive: ${newState.alive}, os: ${newState.os}, actionPending: ${newState.actionPending}}`,
+    );
     return newState;
   }
 
   public async shutdown(state: NodeState) {
     const ssh = new SSH2Promise({
       host: state.host,
-      username: state.username,
+      username: this.getUsername(state),
       identity: this.configService.createPrivateKeyPath(),
     } as unknown);
+
+    let afterState: NodeState;
     try {
+      this.logger.log(`[Node ${state.host}] Opening SSH connection`);
       await ssh.connect();
+      this.logger.log(`[Node ${state.host}] SSH connection opened`);
+
       if (state.os === OS.UBUNTU) await ssh.exec('sudo', ['shutdown', 'now']);
       else await ssh.exec('shutdown', ['-s', '-t', '0']);
       this.logger.log(`[Node ${state.host}] Shutdown requested`);
       ssh.close();
 
       /** Wait for shutdown */
-      let afterState: NodeState;
-      let waitPeriods = this.waitPeriods;
+      let waitPeriods = this.waitShutdownPeriods;
       do {
         await wait(1000);
         afterState = await this.checkState(state);
@@ -110,11 +131,14 @@ export class NodesService {
       } while (waitPeriods-- > 0 && afterState.alive);
 
       if (waitPeriods >= 0) this.logger.log(`[Node ${state.host}] Shutdown`);
-      else this.logger.log(`[Node ${state.host}] Shutdown timeout`);
+      else this.logger.error(`[Node ${state.host}] Shutdown timeout`);
 
       return afterState;
     } catch (e) {
-      return state;
+      this.logger.error(`[Node ${state.host}] Shutdown error`);
+      this.logger.error(e);
+
+      return afterState || state;
     }
   }
 
@@ -124,9 +148,9 @@ export class NodesService {
 
     /** Wait for boot */
     let afterState: NodeState;
-    let waitPeriods = this.waitPeriods;
+    let waitPeriods = this.waitBootPeriods;
     do {
-      wol.wake(state.mac);
+      await this.wake(state.mac);
       await wait(1000);
       afterState = await this.checkState(state);
       this.setState(afterState);
@@ -137,9 +161,28 @@ export class NodesService {
     this.bootTargets.set(state.host, OS.WINDOWS);
     if (waitPeriods >= 0)
       this.logger.log(`[Node ${state.host}] Booted with: ${afterState.os}`);
-    else this.logger.log(`[Node ${state.host}] Boot timeout`);
+    else this.logger.error(`[Node ${state.host}] Boot timeout`);
 
     return afterState;
+  }
+
+  private async wake(mac: string) {
+    try {
+      await firstValueFrom(
+        this.httpService.post(`${this.bootOptions.wolAgentUrl}/wake`, {
+          wake_token: this.jwtService.sign(
+            { mac },
+            { expiresIn: '1s', secret: this.bootOptions.wolAgentSecret },
+          ),
+        }),
+      );
+    } catch (e) {
+      this.logger.error(e);
+    }
+  }
+
+  private getUsername(state: NodeState) {
+    return state.os === OS.UBUNTU ? state.username : state.usernameWindows;
   }
 
   private handleTFTP(req, res) {
